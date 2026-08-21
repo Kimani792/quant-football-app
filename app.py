@@ -65,7 +65,7 @@ st.markdown("""
         border-radius: 6px;
     }
     </style>
-""", unsafe_allow_html=style)
+""", unsafe_allow_html=True)
 
 DB_PATH = "quant_live_ledger.db"
 
@@ -275,7 +275,7 @@ with tab3:
             for idx, row in open_bets.iterrows():
                 b1, b2, b3 = st.columns([3, 2, 1])
                 with b1:
-                    st.markdown(f"**{row['match_name']}** — `{row['selection']}` @ `{row['executed_odds']:.2f}` (Stake: `${row['cash_staked']:,.2f}`)--")
+                    st.markdown(f"**{row['match_name']}** — `{row['selection']}` @ `{row['executed_odds']:.2f}` (Stake: `${row['cash_staked']:,.2f}`)")
                 with b2:
                     outcome = st.selectbox("Outcome", ["WIN", "LOSS", "VOID"], key=f"sel_{row['ticket_id']}")
                 with b3:
