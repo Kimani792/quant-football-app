@@ -6,45 +6,54 @@ from datetime import datetime, date
 import streamlit as st
 
 # =====================================================================
-# 1. PAGE SETUP & HIGH-CONTRAST VISUAL THEME
+# 1. PAGE SETUP & VIBRANT HIGH-CONTRAST STYLING
 # =====================================================================
 st.set_page_config(
     page_title="QUANT FOOTBALL SUITE", 
     layout="wide", 
-    page_icon="⚡",
+    page_icon="⚽",
     initial_sidebar_state="expanded"
 )
 
-# Custom High-Contrast & Vibrant Theme CSS
 st.markdown("""
     <style>
-    /* Vibrant Gradient Background */
     .stApp {
         background: linear-gradient(135deg, #0a0f1d 0%, #071828 50%, #0d1b2a 100%);
         color: #FFFFFF;
         font-family: 'Inter', -apple-system, sans-serif;
     }
     
-    /* High-Contrast Sidebar */
     [data-testid="stSidebar"] {
         background-color: #0b1320 !important;
         border-right: 2px solid #00E5FF;
     }
     
-    /* Sidebar Headers & Labels */
     [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] label {
         color: #00E5FF !important;
         font-weight: 700 !important;
     }
     
-    /* Content Headers */
-    h1, h2, h3 {
-        color: #FFFFFF !important;
-        font-weight: 800 !important;
-        letter-spacing: -0.5px;
+    .card-value {
+        background: #111a2e;
+        border: 2px solid #00FF88;
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(0, 255, 136, 0.15);
     }
     
-    /* Metric Cards in Sidebar */
+    .card-no-value {
+        background: #1a111e;
+        border: 2px solid #FF3366;
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(255, 51, 102, 0.15);
+    }
+
+    .badge-green { color: #00FF88; font-size: 22px; font-weight: 900; }
+    .badge-red { color: #FF3366; font-size: 18px; font-weight: 800; }
+    
     .bankroll-card {
         background: #111a2e;
         border: 1px solid #00E5FF;
@@ -52,43 +61,8 @@ st.markdown("""
         padding: 12px;
         margin-bottom: 10px;
     }
-    .bankroll-title {
-        color: #94A3B8;
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-    }
-    .bankroll-value {
-        color: #00FFCC;
-        font-size: 22px;
-        font-weight: 800;
-    }
-    
-    /* Custom Value Badges */
-    .value-box-green {
-        background-color: #003B2B;
-        border: 2px solid #00FF88;
-        color: #00FF88;
-        padding: 12px;
-        border-radius: 8px;
-        font-weight: bold;
-        text-align: center;
-    }
-    .value-box-red {
-        background-color: #3B0000;
-        border: 2px solid #FF3366;
-        color: #FF3366;
-        padding: 12px;
-        border-radius: 8px;
-        font-weight: bold;
-        text-align: center;
-    }
-    
-    /* Form Inputs Styling */
-    .stNumberInput, .stTextInput, .stSelectbox, .stDateInput {
-        background-color: #1A2332;
-        border-radius: 6px;
-    }
+    .bankroll-title { color: #94A3B8; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .bankroll-value { color: #00FFCC; font-size: 22px; font-weight: 800; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -117,7 +91,7 @@ def init_db():
 init_db()
 
 # =====================================================================
-# 2. DIXON-COLES POISSON ENGINE
+# 2. DIXON-COLES ENGINE & MATRIX GENERATOR
 # =====================================================================
 def dixon_coles_tau(x, y, lambda_h, mu_a, rho=-0.06):
     if x == 0 and y == 0: return 1.0 - (lambda_h * mu_a * rho)
@@ -126,7 +100,7 @@ def dixon_coles_tau(x, y, lambda_h, mu_a, rho=-0.06):
     elif x == 1 and y == 1: return 1.0 - rho
     return 1.0
 
-def calculate_match_probabilities(lambda_h, mu_a, max_goals=8):
+def calculate_full_match_engine(lambda_h, mu_a, max_goals=8):
     matrix = np.zeros((max_goals + 1, max_goals + 1))
     for h in range(max_goals + 1):
         for a in range(max_goals + 1):
@@ -140,22 +114,28 @@ def calculate_match_probabilities(lambda_h, mu_a, max_goals=8):
     prob_draw = float(np.sum(np.diag(matrix)))
     prob_away = float(np.sum(np.triu(matrix, 1)))
     
-    prob_under_25 = 0.0
-    for h in range(3):
-        for a in range(3 - h):
-            prob_under_25 += matrix[h, a]
+    prob_under_25 = sum(matrix[h, a] for h in range(3) for a in range(3 - h))
     prob_over_25 = 1.0 - prob_under_25
     
-    return {
+    # 3x3 Scoreline Grid for Beginners
+    grid_3x3 = pd.DataFrame(
+        matrix[:3, :3] * 100, 
+        index=["Home 0", "Home 1", "Home 2"], 
+        columns=["Away 0", "Away 1", "Away 2"]
+    )
+    
+    probs = {
         "Home": prob_home, 
         "Draw": prob_draw, 
         "Away": prob_away,
         "Over 2.5": prob_over_25,
         "Under 2.5": prob_under_25
     }
+    
+    return probs, grid_3x3
 
 # =====================================================================
-# 3. SIDEBAR: FILTERS & LIVE BANKROLL
+# 3. SIDEBAR CONTROLS & BANKROLL
 # =====================================================================
 with st.sidebar:
     st.title("⚙️ CONTROL PANEL")
@@ -170,11 +150,9 @@ with st.sidebar:
     selected_league = st.selectbox("Select League", league_options)
     
     st.markdown("---")
-    st.markdown("### 💰 Bankroll Status")
+    st.markdown("### 💰 Live Capital Tracker")
+    initial_bankroll = st.number_input("Starting Capital ($ / KES)", value=1000.0, step=100.0)
     
-    initial_bankroll = st.number_input("Starting Capital", value=1000.0, step=100.0)
-    
-    # Calculate Live Bankroll Stats from DB
     with sqlite3.connect(DB_PATH) as conn:
         df_ledger = pd.read_sql_query("SELECT * FROM live_bets", conn)
         
@@ -201,41 +179,48 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # =====================================================================
-# 4. MAIN APPLICATION HEADER & TABS
+# 4. MAIN INTERACTION DECK
 # =====================================================================
-st.title("⚡ QUANTITATIVE FOOTBALL ANALYTICS")
-st.markdown(f"<p style='color: #00FFCC; font-size: 15px; font-weight: 700;'>FILTERED: {start_date.strftime('%d/%m/%Y')} TO {end_date.strftime('%d/%m/%Y')} | LEAGUE: {selected_league.upper()}</p>", unsafe_allow_html=True)
+st.title("⚡ QUANTITATIVE FOOTBALL SUITE")
+st.markdown(f"<p style='color: #00FFCC; font-size: 15px; font-weight: 700;'>ACTIVE FILTER: {start_date.strftime('%d/%m/%Y')} TO {end_date.strftime('%d/%m/%Y')} | LEAGUE: {selected_league.upper()}</p>", unsafe_allow_html=True)
 st.write("---")
 
 tab1, tab2, tab3 = st.tabs([
-    "🎯 VALUE SCANNER", 
-    "📝 EXECUTE BET", 
+    "🎯 INTERACTIVE MATCH SCANNER", 
+    "📝 EXECUTE TICKET", 
     "📈 CAPITAL LEDGER"
 ])
 
 # ---------------------------------------------------------------------
-# TAB 1: VALUE SCANNER
+# TAB 1: INTERACTIVE SCANNER & SCORE GRID
 # ---------------------------------------------------------------------
 with tab1:
-    st.markdown("### 1. Match Goal Expectations")
+    col_input, col_grid = st.columns([1, 1])
     
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        match_title = st.text_input("Fixture Name", value="Arsenal vs Chelsea")
-    with c2:
-        lambda_h = st.number_input("Home Expected Goals (λ)", value=1.85, step=0.05)
-    with c3:
-        mu_a = st.number_input("Away Expected Goals (μ)", value=0.95, step=0.05)
-        
-    st.markdown("### 2. Live Bookmaker Odds")
+    with col_input:
+        st.markdown("### 1. Match Parameters")
+        fixture_name = st.text_input("Fixture", value="Arsenal vs Chelsea")
+        c_h, c_a = st.columns(2)
+        with c_h:
+            lambda_h = st.slider("Home Expected Goals (λ)", 0.2, 4.0, 1.85, 0.05)
+        with c_a:
+            mu_a = st.slider("Away Expected Goals (μ)", 0.2, 4.0, 0.95, 0.05)
+            
+    probs, score_grid = calculate_full_match_engine(lambda_h, mu_a)
+    
+    with col_grid:
+        st.markdown("### 2. Scoreline Probability Grid (%)")
+        st.dataframe(score_grid.style.background_gradient(cmap="Blues"), use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 3. Live Odds Evaluator")
+    
     o1, o2, o3, o4, o5 = st.columns(5)
-    with o1: odds_h = st.number_input("Home Win Odds", value=1.85, step=0.01)
+    with o1: odds_h = st.number_input("Home Odds", value=1.85, step=0.01)
     with o2: odds_d = st.number_input("Draw Odds", value=3.80, step=0.01)
-    with o3: odds_a = st.number_input("Away Win Odds", value=4.50, step=0.01)
+    with o3: odds_a = st.number_input("Away Odds", value=4.50, step=0.01)
     with o4: odds_o = st.number_input("Over 2.5 Odds", value=1.95, step=0.01)
     with o5: odds_u = st.number_input("Under 2.5 Odds", value=1.90, step=0.01)
-    
-    probs = calculate_match_probabilities(lambda_h, mu_a)
     
     markets = [
         ("Home Win", "Home", odds_h),
@@ -246,9 +231,9 @@ with tab1:
     ]
     
     st.markdown("---")
-    st.markdown(f"### 📊 Valuation Breakdown for **{match_title}**")
+    st.markdown(f"### 📊 Valuation Cards for **{fixture_name}**")
     
-    res_cols = st.columns(len(markets))
+    card_cols = st.columns(len(markets))
     
     for idx, (label, key, b_odds) in enumerate(markets):
         m_prob = probs[key]
@@ -259,28 +244,32 @@ with tab1:
         full_k = (m_prob * b - q) / b if b > 0 else 0
         q_kelly = max(0.0, full_k * 0.25) * 100
         
-        with res_cols[idx]:
-            st.markdown(f"**{label}**")
-            st.markdown(f"Bookie: `{b_odds:.2f}`")
-            st.markdown(f"Model: `{m_prob*100:.1f}%`")
-            
+        with card_cols[idx]:
             if ev > 0:
                 st.markdown(f"""
-                    <div class="value-box-green">
-                        EDGE: +{ev*100:.1f}%<br>
-                        STAKE: {q_kelly:.1f}%
+                    <div class="card-value">
+                        <div style="color: #94A3B8; font-size: 13px; font-weight: 700;">{label.upper()}</div>
+                        <div style="font-size: 20px; font-weight: 800; margin: 4px 0;">{b_odds:.2f}</div>
+                        <div style="color: #00FFCC; font-size: 13px;">Model: {m_prob*100:.1f}%</div>
+                        <hr style="border-color: #00FF88; margin: 8px 0;">
+                        <div class="badge-green">+{ev*100:.1f}%</div>
+                        <div style="color: #FFFFFF; font-size: 12px; font-weight: 700;">STAKE: {q_kelly:.1f}%</div>
                     </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
-                    <div class="value-box-red">
-                        EDGE: {ev*100:.1f}%<br>
-                        NO VALUE
+                    <div class="card-no-value">
+                        <div style="color: #94A3B8; font-size: 13px; font-weight: 700;">{label.upper()}</div>
+                        <div style="font-size: 20px; font-weight: 800; margin: 4px 0;">{b_odds:.2f}</div>
+                        <div style="color: #FF3366; font-size: 13px;">Model: {m_prob*100:.1f}%</div>
+                        <hr style="border-color: #FF3366; margin: 8px 0;">
+                        <div class="badge-red">{ev*100:.1f}%</div>
+                        <div style="color: #94A3B8; font-size: 12px;">NO VALUE</div>
                     </div>
                 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# TAB 2: EXECUTE BET
+# TAB 2: EXECUTE TICKET
 # ---------------------------------------------------------------------
 with tab2:
     st.markdown("### Record Ticket Placed with Bookmaker")
@@ -288,8 +277,7 @@ with tab2:
     with st.form("bet_entry_form"):
         col_x, col_y = st.columns(2)
         with col_x:
-            match_name = st.text_input("Match Name", value=match_title)
-            comp_choice = selected_league if selected_league != "All Leagues" else "Premier League"
+            match_name = st.text_input("Match Name", value=fixture_name)
             competition = st.selectbox("League / Competition", ["Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"], index=0)
             selection = st.selectbox("Selection Placed", ["Home", "Draw", "Away", "Over 2.5 Goals", "Under 2.5 Goals"])
             executed_odds = st.number_input("Odds Secured", value=1.85, step=0.01)
@@ -318,7 +306,7 @@ with tab2:
 # TAB 3: CAPITAL LEDGER
 # ---------------------------------------------------------------------
 with tab3:
-    st.markdown("### Portfolio Performance & Ticket Settle")
+    st.markdown("### Portfolio Performance & Ticket Settlement")
     
     with sqlite3.connect(DB_PATH) as conn:
         df_bets = pd.read_sql_query("SELECT * FROM live_bets", conn)
@@ -326,7 +314,6 @@ with tab3:
     if df_bets.empty:
         st.info("No bets recorded in ledger yet.")
     else:
-        # Filter ledger by selected league & dates
         df_bets['match_date_dt'] = pd.to_datetime(df_bets['match_date']).dt.date
         mask = (df_bets['match_date_dt'] >= start_date) & (df_bets['match_date_dt'] <= end_date)
         if selected_league != "All Leagues":
