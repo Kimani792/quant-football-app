@@ -1,15 +1,16 @@
 import sqlite3
 import pandas as pd
 import numpy as np
+import requests
 from scipy.stats import poisson
 from datetime import datetime, date
 import streamlit as st
 
 # =====================================================================
-# 1. PAGE SETUP & HIGH-CONTRAST SPORTPESA THEMING
+# 1. PAGE SETUP & SPORTPESA HIGH-CONTRAST THEMING
 # =====================================================================
 st.set_page_config(
-    page_title="QUANT FOOTBALL | SPORTPESA EDITION", 
+    page_title="QUANT FOOTBALL | SPORTPESA MULTI-MATCH", 
     layout="wide", 
     page_icon="⚽",
     initial_sidebar_state="expanded"
@@ -33,30 +34,12 @@ st.markdown("""
         font-weight: 700 !important;
     }
     
-    .match-header {
+    .match-card {
         background: #0d1b2a;
         border: 1px solid #1b263b;
         border-radius: 12px;
         padding: 16px;
-        margin-bottom: 12px;
-    }
-    
-    .badge-value {
-        background-color: #00FF88;
-        color: #000000;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-weight: 900;
-        font-size: 13px;
-    }
-
-    .badge-novalue {
-        background-color: #2a111e;
-        color: #FF3366;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-weight: 800;
-        font-size: 13px;
+        margin-bottom: 20px;
     }
     
     .bankroll-card {
@@ -96,7 +79,7 @@ def init_db():
 init_db()
 
 # =====================================================================
-# 2. DIXON-COLES PROBABILITY ENGINE
+# 2. POISSON & DIXON-COLES ENGINE
 # =====================================================================
 def dixon_coles_tau(x, y, lambda_h, mu_a, rho=-0.06):
     if x == 0 and y == 0: return 1.0 - (lambda_h * mu_a * rho)
@@ -121,7 +104,6 @@ def calculate_match_metrics(lambda_h, mu_a, max_goals=8):
     p_under = sum(matrix[h, a] for h in range(3) for a in range(3 - h))
     p_over = 1.0 - p_under
     
-    # Both Teams To Score (BTTS)
     p_btts_yes = float(np.sum(matrix[1:, 1:]))
     p_btts_no = 1.0 - p_btts_yes
     
@@ -132,60 +114,78 @@ def calculate_match_metrics(lambda_h, mu_a, max_goals=8):
     }
 
 # =====================================================================
-# 3. FIXTURES WITH CREST URLS & SPORTPESA MARKETS
+# 3. DYNAMIC FIXTURE LOADER (API / MULTI-MATCH FEED)
 # =====================================================================
-def get_sportpesa_fixtures():
-    today_str = date.today().strftime("%Y-%m-%d")
-    return [
-        {
-            "id": "SP_001",
-            "date": today_str, 
-            "league": "Premier League", 
-            "home": "Arsenal", 
-            "away": "Chelsea", 
-            "home_logo": "https://crests.football-data.org/57.png",
-            "away_logo": "https://crests.football-data.org/61.png",
-            "lambda_h": 1.85, "mu_a": 0.95, 
-            "sportpesa_odds": {"1": 1.85, "X": 3.80, "2": 4.50, "Over 2.5": 1.95, "Under 2.5": 1.90, "BTTS Yes": 1.80, "BTTS No": 2.00}
-        },
-        {
-            "id": "SP_002",
-            "date": today_str, 
-            "league": "Premier League", 
-            "home": "Liverpool", 
-            "away": "Manchester City", 
-            "home_logo": "https://crests.football-data.org/64.png",
-            "away_logo": "https://crests.football-data.org/65.png",
-            "lambda_h": 1.60, "mu_a": 1.55, 
-            "sportpesa_odds": {"1": 2.40, "X": 3.60, "2": 2.80, "Over 2.5": 1.70, "Under 2.5": 2.15, "BTTS Yes": 1.55, "BTTS No": 2.30}
-        },
-        {
-            "id": "SP_003",
-            "date": today_str, 
-            "league": "La Liga", 
-            "home": "Real Madrid", 
-            "away": "FC Barcelona", 
-            "home_logo": "https://crests.football-data.org/86.png",
-            "away_logo": "https://crests.football-data.org/81.png",
-            "lambda_h": 1.90, "mu_a": 1.30, 
-            "sportpesa_odds": {"1": 2.05, "X": 3.70, "2": 3.40, "Over 2.5": 1.65, "Under 2.5": 2.25, "BTTS Yes": 1.60, "BTTS No": 2.20}
-        }
-    ]
+LEAGUE_CODES = {
+    "Premier League": "PL",
+    "La Liga": "PD",
+    "Serie A": "SA",
+    "Bundesliga": "BL1",
+    "UEFA Champions League": "CL"
+}
+
+@st.cache_data(ttl=3600)
+def fetch_league_fixtures(league_name, date_from, date_to, api_key=""):
+    """Fetches all scheduled fixtures for a given league and date range."""
+    if not api_key:
+        # Fallback multi-match dataset if no API Key provided
+        today_str = date.today().strftime("%Y-%m-%d")
+        all_fixtures = [
+            {"date": today_str, "league": "Premier League", "home": "Arsenal", "away": "Chelsea", "home_logo": "https://crests.football-data.org/57.png", "away_logo": "https://crests.football-data.org/61.png", "lambda_h": 1.85, "mu_a": 0.95, "odds": {"1": 1.85, "X": 3.80, "2": 4.50, "Over 2.5": 1.95, "Under 2.5": 1.90, "BTTS Yes": 1.80, "BTTS No": 2.00}},
+            {"date": today_str, "league": "Premier League", "home": "Liverpool", "away": "Manchester City", "home_logo": "https://crests.football-data.org/64.png", "away_logo": "https://crests.football-data.org/65.png", "lambda_h": 1.60, "mu_a": 1.55, "odds": {"1": 2.40, "X": 3.60, "2": 2.80, "Over 2.5": 1.70, "Under 2.5": 2.15, "BTTS Yes": 1.55, "BTTS No": 2.30}},
+            {"date": today_str, "league": "Premier League", "home": "Manchester United", "away": "Tottenham", "home_logo": "https://crests.football-data.org/66.png", "away_logo": "https://crests.football-data.org/73.png", "lambda_h": 1.50, "mu_a": 1.40, "odds": {"1": 2.10, "X": 3.50, "2": 3.20, "Over 2.5": 1.75, "Under 2.5": 2.05, "BTTS Yes": 1.65, "BTTS No": 2.10}},
+            {"date": today_str, "league": "La Liga", "home": "Real Madrid", "away": "FC Barcelona", "home_logo": "https://crests.football-data.org/86.png", "away_logo": "https://crests.football-data.org/81.png", "lambda_h": 1.90, "mu_a": 1.30, "odds": {"1": 2.05, "X": 3.70, "2": 3.40, "Over 2.5": 1.65, "Under 2.5": 2.25, "BTTS Yes": 1.60, "BTTS No": 2.20}},
+            {"date": today_str, "league": "La Liga", "home": "Atletico Madrid", "away": "Sevilla", "home_logo": "https://crests.football-data.org/78.png", "away_logo": "https://crests.football-data.org/559.png", "lambda_h": 1.70, "mu_a": 0.80, "odds": {"1": 1.75, "X": 3.50, "2": 4.80, "Over 2.5": 2.00, "Under 2.5": 1.80, "BTTS Yes": 1.95, "BTTS No": 1.80}},
+            {"date": today_str, "league": "Serie A", "home": "Inter Milan", "away": "AC Milan", "home_logo": "https://crests.football-data.org/108.png", "away_logo": "https://crests.football-data.org/98.png", "lambda_h": 1.65, "mu_a": 1.10, "odds": {"1": 2.00, "X": 3.40, "2": 3.80, "Over 2.5": 1.85, "Under 2.5": 1.95, "BTTS Yes": 1.75, "BTTS No": 2.00}},
+            {"date": today_str, "league": "Serie A", "home": "Juventus", "away": "AS Roma", "home_logo": "https://crests.football-data.org/109.png", "away_logo": "https://crests.football-data.org/100.png", "lambda_h": 1.40, "mu_a": 0.90, "odds": {"1": 1.90, "X": 3.30, "2": 4.20, "Over 2.5": 2.10, "Under 2.5": 1.70, "BTTS Yes": 1.90, "BTTS No": 1.85}},
+        ]
+        if league_name != "All Leagues":
+            all_fixtures = [f for f in all_fixtures if f["league"] == league_name]
+        return all_fixtures
+
+    # Real Live API Call
+    code = LEAGUE_CODES.get(league_name, "")
+    url = f"https://api.football-data.org/v4/competitions/{code}/matches?dateFrom={date_from}&dateTo={date_to}"
+    headers = {"X-Auth-Token": api_key}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        parsed = []
+        for m in data.get("matches", []):
+            parsed.append({
+                "date": m["utcDate"][:10],
+                "league": league_name,
+                "home": m["homeTeam"]["name"],
+                "away": m["awayTeam"]["name"],
+                "home_logo": m["homeTeam"].get("crest", ""),
+                "away_logo": m["awayTeam"].get("crest", ""),
+                "lambda_h": 1.60, # Default expected goals prior
+                "mu_a": 1.10,
+                "odds": {"1": 2.00, "X": 3.40, "2": 3.60, "Over 2.5": 1.90, "Under 2.5": 1.90, "BTTS Yes": 1.75, "BTTS No": 2.00}
+            })
+        return parsed
+    except Exception:
+        return []
 
 # =====================================================================
-# 4. SIDEBAR & BANKROLL TRACKER
+# 4. SIDEBAR CONTROLS
 # =====================================================================
 with st.sidebar:
     st.title("⚙️ CONTROL PANEL")
     
-    st.markdown("### 📅 Date Filter")
+    st.markdown("### 📅 Date Range Filter")
     start_date = st.date_input("Start Date", value=date.today(), format="DD/MM/YYYY")
     end_date = st.date_input("End Date", value=date.today(), format="DD/MM/YYYY")
     
     st.markdown("---")
     st.markdown("### 🏆 League Filter")
-    league_options = ["All Leagues", "Premier League", "La Liga", "Serie A", "Bundesliga"]
+    league_options = ["All Leagues", "Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League"]
     selected_league = st.selectbox("Select League", league_options)
+    
+    st.markdown("---")
+    st.markdown("### 🔑 Football API Token (Optional)")
+    api_token = st.text_input("football-data.org Key", type="password", help="Leave blank to use internal fixture database")
     
     st.markdown("---")
     st.markdown("### 🇰🇪 SportPesa Bankroll")
@@ -219,72 +219,78 @@ with st.sidebar:
 # =====================================================================
 # 5. MAIN NAVIGATION DECK
 # =====================================================================
-st.title("⚽ SPORTPESA VALUE SCANNER")
+st.title("⚽ SPORTPESA MULTI-MATCH SCANNER")
+st.markdown(f"<p style='color: #00FFCC; font-size: 14px; font-weight: 700;'>FILTER: {start_date.strftime('%d/%m/%Y')} TO {end_date.strftime('%d/%m/%Y')} | LEAGUE: {selected_league.upper()}</p>", unsafe_allow_html=True)
 st.write("---")
 
 tab1, tab2, tab3 = st.tabs([
-    "🎯 LIVE FIXTURES SCANNER", 
+    "🎯 ALL MATCH FIXTURES", 
     "📝 EXECUTE TICKET", 
-    "📈 BANKROLL LEDGER"
+    "📈 CAPITAL LEDGER"
 ])
 
 # ---------------------------------------------------------------------
-# TAB 1: VISUAL SPORTPESA FIXTURES & VALUE INDICATORS
+# TAB 1: ALL MATCHES WITHIN SELECTED TIME & LEAGUE
 # ---------------------------------------------------------------------
 with tab1:
-    fixtures = get_sportpesa_fixtures()
-    if selected_league != "All Leagues":
-        fixtures = [f for f in fixtures if f["league"] == selected_league]
+    matches = fetch_league_fixtures(
+        selected_league, 
+        start_date.strftime("%Y-%m-%d"), 
+        end_date.strftime("%Y-%m-%d"), 
+        api_token
+    )
+    
+    if not matches:
+        st.warning(f"No matches scheduled for {selected_league} between {start_date.strftime('%d/%m/%Y')} and {end_date.strftime('%d/%m/%Y')}.")
+    else:
+        st.markdown(f"### Showing **{len(matches)}** Scheduled Match(es)")
         
-    for match in fixtures:
-        probs = calculate_match_metrics(match['lambda_h'], match['mu_a'])
-        
-        # Match Visual Header with Team Logos
-        st.markdown(f"""
-            <div class="match-header">
-                <div style="display: flex; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <img src="{match['home_logo']}" width="36" height="36"/>
-                        <span style="font-size: 18px; font-weight: 800;">{match['home']}</span>
-                        <span style="color: #94A3B8; font-weight: 700;">VS</span>
-                        <span style="font-size: 18px; font-weight: 800;">{match['away']}</span>
-                        <img src="{match['away_logo']}" width="36" height="36"/>
-                    </div>
-                    <div style="color: #00E5FF; font-weight: 700; font-size: 13px; background: #050b14; padding: 4px 10px; border-radius: 6px;">
-                        {match['league']}
+        for idx, match in enumerate(matches):
+            probs = calculate_match_metrics(match['lambda_h'], match['mu_a'])
+            
+            # Match Banner with Crests
+            st.markdown(f"""
+                <div class="match-card">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <img src="{match['home_logo']}" width="32" height="32" />
+                            <span style="font-size: 17px; font-weight: 800;">{match['home']}</span>
+                            <span style="color: #00E5FF; font-weight: 900; margin: 0 6px;">VS</span>
+                            <span style="font-size: 17px; font-weight: 800;">{match['away']}</span>
+                            <img src="{match['away_logo']}" width="32" height="32" />
+                        </div>
+                        <div style="color: #94A3B8; font-size: 13px; font-weight: 700;">
+                            📅 {match['date']} | <span style="color: #00FFCC;">{match['league']}</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        table_rows = []
-        for market in ["1", "X", "2", "Over 2.5", "Under 2.5", "BTTS Yes", "BTTS No"]:
-            m_prob = probs[market]
-            sp_odds = match["sportpesa_odds"][market]
-            ev = (m_prob * sp_odds) - 1.0
+            """, unsafe_allow_html=True)
             
-            b = sp_odds - 1.0
-            q = 1.0 - m_prob
-            full_k = (m_prob * b - q) / b if b > 0 else 0
-            q_kelly = max(0.0, full_k * 0.25) * 100
-            rec_kes = (q_kelly / 100) * current_available
+            # Match Odds & Value Grid
+            table_data = []
+            for mkt in ["1", "X", "2", "Over 2.5", "Under 2.5", "BTTS Yes", "BTTS No"]:
+                m_prob = probs[mkt]
+                sp_odds = match["odds"][mkt]
+                ev = (m_prob * sp_odds) - 1.0
+                
+                b = sp_odds - 1.0
+                q = 1.0 - m_prob
+                full_k = (m_prob * b - q) / b if b > 0 else 0
+                q_kelly = max(0.0, full_k * 0.25) * 100
+                rec_stake = (q_kelly / 100) * current_available
+                
+                table_data.append({
+                    "Market": mkt,
+                    "SportPesa Odds": f"{sp_odds:.2f}",
+                    "Model Prob": f"{m_prob*100:.1f}%",
+                    "Expected Value": f"{ev*100:+.1f}%",
+                    "Rec. Stake (KES)": f"KES {rec_stake:,.0f}" if ev > 0 else "KES 0",
+                    "Edge Status": "🟢 VALUE" if ev > 0 else "🔴 NO VALUE"
+                })
             
-            table_rows.append({
-                "Market": market,
-                "SportPesa Odds": f"{sp_odds:.2f}",
-                "Model Prob": f"{m_prob*100:.1f}%",
-                "Expected Value (EV)": f"{ev*100:+.1f}%",
-                "Kelly Stake (%)": f"{q_kelly:.1f}%",
-                "Rec. Stake (KES)": f"KES {rec_kes:,.0f}" if ev > 0 else "KES 0",
-                "Edge Status": "🟢 VALUE" if ev > 0 else "🔴 NO VALUE"
-            })
-            
-        df_sp = pd.DataFrame(table_rows)
-        
-        c_table, c_space = st.columns([4, 1])
-        with c_table:
-            st.dataframe(df_sp, use_container_width=True, hide_index=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+            df_display = pd.DataFrame(table_data)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            st.markdown("<hr style='border-color: #1b263b; margin-bottom: 25px;'>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
 # TAB 2: EXECUTE TICKET
@@ -292,11 +298,11 @@ with tab1:
 with tab2:
     st.markdown("### Record SportPesa Bet Ticket")
     
-    with st.form("sp_bet_entry"):
+    with st.form("bet_entry_form"):
         col_x, col_y = st.columns(2)
         with col_x:
             match_name = st.text_input("Match Name", value="Arsenal vs Chelsea")
-            competition = st.selectbox("League", ["Premier League", "La Liga", "Serie A", "Bundesliga", "Other"])
+            competition = st.selectbox("League", ["Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"])
             selection = st.selectbox("Selection Placed", ["1", "X", "2", "Over 2.5", "Under 2.5", "BTTS Yes", "BTTS No"])
             executed_odds = st.number_input("SportPesa Odds Secured", value=1.85, step=0.01)
         
@@ -317,7 +323,7 @@ with tab2:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (ticket_id, datetime.now().isoformat(), str(match_date), competition, match_name, selection, executed_odds, cash_staked, model_prob))
                 conn.commit()
-            st.success(f"✅ Ticket {ticket_id} successfully recorded!")
+            st.success(f"✅ Ticket {ticket_id} successfully logged!")
             st.rerun()
 
 # ---------------------------------------------------------------------
@@ -345,7 +351,7 @@ with tab3:
         m3.metric("ACTUAL YIELD (ROI)", f"{roi:+.2f}%")
         
         st.markdown("---")
-        st.markdown("### Settle Open SportPesa Tickets")
+        st.markdown("### Settle Open Tickets")
         
         if not open_bets.empty:
             for idx, row in open_bets.iterrows():
@@ -367,6 +373,6 @@ with tab3:
             
         if not settled_bets.empty:
             st.markdown("---")
-            st.markdown("### Cumulative Capital Growth Curve")
+            st.markdown("### Cumulative Capital Curve")
             settled_bets['Cumulative_PnL'] = settled_bets['net_pnl'].cumsum()
             st.line_chart(settled_bets['Cumulative_PnL'])
