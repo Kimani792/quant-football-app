@@ -2,41 +2,66 @@ import sqlite3
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from datetime import datetime
+from datetime import datetime, date
 import streamlit as st
 
 # =====================================================================
-# 1. PAGE SETUP & HIGH-CONTRAST THEMING
+# 1. PAGE SETUP & HIGH-CONTRAST VISUAL THEME
 # =====================================================================
 st.set_page_config(
-    page_title="QUANT BETTING SUITE", 
+    page_title="QUANT FOOTBALL SUITE", 
     layout="wide", 
     page_icon="⚡",
     initial_sidebar_state="expanded"
 )
 
-# Custom High-Contrast CSS Styling
+# Custom High-Contrast & Vibrant Theme CSS
 st.markdown("""
     <style>
-    /* Global Page Background & Font Hierarchy */
+    /* Vibrant Gradient Background */
     .stApp {
-        background-color: #0E1117;
+        background: linear-gradient(135deg, #0a0f1d 0%, #071828 50%, #0d1b2a 100%);
         color: #FFFFFF;
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        font-family: 'Inter', -apple-system, sans-serif;
     }
     
-    /* High Contrast Headers */
+    /* High-Contrast Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0b1320 !important;
+        border-right: 2px solid #00E5FF;
+    }
+    
+    /* Sidebar Headers & Labels */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] label {
+        color: #00E5FF !important;
+        font-weight: 700 !important;
+    }
+    
+    /* Content Headers */
     h1, h2, h3 {
         color: #FFFFFF !important;
         font-weight: 800 !important;
         letter-spacing: -0.5px;
     }
     
-    /* Metric Cards */
-    [data-testid="stMetricValue"] {
-        font-size: 28px !important;
-        font-weight: 800 !important;
-        color: #00FFCC !important;
+    /* Metric Cards in Sidebar */
+    .bankroll-card {
+        background: #111a2e;
+        border: 1px solid #00E5FF;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    .bankroll-title {
+        color: #94A3B8;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .bankroll-value {
+        color: #00FFCC;
+        font-size: 22px;
+        font-weight: 800;
     }
     
     /* Custom Value Badges */
@@ -59,9 +84,9 @@ st.markdown("""
         text-align: center;
     }
     
-    /* Input Container Styling */
-    .stNumberInput, .stTextInput, .stSelectbox {
-        background-color: #1A1D24;
+    /* Form Inputs Styling */
+    .stNumberInput, .stTextInput, .stSelectbox, .stDateInput {
+        background-color: #1A2332;
         border-radius: 6px;
     }
     </style>
@@ -115,7 +140,6 @@ def calculate_match_probabilities(lambda_h, mu_a, max_goals=8):
     prob_draw = float(np.sum(np.diag(matrix)))
     prob_away = float(np.sum(np.triu(matrix, 1)))
     
-    # Over / Under 2.5 Goals Matrix Sum
     prob_under_25 = 0.0
     for h in range(3):
         for a in range(3 - h):
@@ -131,10 +155,56 @@ def calculate_match_probabilities(lambda_h, mu_a, max_goals=8):
     }
 
 # =====================================================================
-# 3. APPLICATION HEADER
+# 3. SIDEBAR: FILTERS & LIVE BANKROLL
+# =====================================================================
+with st.sidebar:
+    st.title("⚙️ CONTROL PANEL")
+    
+    st.markdown("### 📅 Date Range Filter")
+    start_date = st.date_input("Start Date", value=date.today(), format="DD/MM/YYYY")
+    end_date = st.date_input("End Date", value=date.today(), format="DD/MM/YYYY")
+    
+    st.markdown("---")
+    st.markdown("### 🏆 Competition Filter")
+    league_options = ["All Leagues", "Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"]
+    selected_league = st.selectbox("Select League", league_options)
+    
+    st.markdown("---")
+    st.markdown("### 💰 Bankroll Status")
+    
+    initial_bankroll = st.number_input("Starting Capital", value=1000.0, step=100.0)
+    
+    # Calculate Live Bankroll Stats from DB
+    with sqlite3.connect(DB_PATH) as conn:
+        df_ledger = pd.read_sql_query("SELECT * FROM live_bets", conn)
+        
+    if not df_ledger.empty:
+        open_bets = df_ledger[df_ledger['status'] == 'OPEN']
+        total_open_stake = open_bets['cash_staked'].sum()
+        settled_bets = df_ledger[df_ledger['status'] != 'OPEN']
+        total_pnl = settled_bets['net_pnl'].sum()
+    else:
+        total_open_stake = 0.0
+        total_pnl = 0.0
+        
+    current_available = initial_bankroll + total_pnl - total_open_stake
+    
+    st.markdown(f"""
+        <div class="bankroll-card">
+            <div class="bankroll-title">Committed Stakes (Open)</div>
+            <div class="bankroll-value" style="color: #FFCC00;">${total_open_stake:,.2f}</div>
+        </div>
+        <div class="bankroll-card">
+            <div class="bankroll-title">Available Capital</div>
+            <div class="bankroll-value" style="color: #00FFCC;">${current_available:,.2f}</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+# =====================================================================
+# 4. MAIN APPLICATION HEADER & TABS
 # =====================================================================
 st.title("⚡ QUANTITATIVE FOOTBALL ANALYTICS")
-st.markdown("<p style='color: #00FFCC; font-size: 16px; font-weight: 600;'>PROBABILISTIC MATCH EVALUATION & BANKROLL EXECUTION</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='color: #00FFCC; font-size: 15px; font-weight: 700;'>FILTERED: {start_date.strftime('%d/%m/%Y')} TO {end_date.strftime('%d/%m/%Y')} | LEAGUE: {selected_league.upper()}</p>", unsafe_allow_html=True)
 st.write("---")
 
 tab1, tab2, tab3 = st.tabs([
@@ -147,15 +217,15 @@ tab1, tab2, tab3 = st.tabs([
 # TAB 1: VALUE SCANNER
 # ---------------------------------------------------------------------
 with tab1:
-    st.markdown("### 1. Match Inputs & Goal Expectations")
+    st.markdown("### 1. Match Goal Expectations")
     
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
         match_title = st.text_input("Fixture Name", value="Arsenal vs Chelsea")
     with c2:
-        lambda_h = st.number_input("Home Expected Goals (λ)", value=1.85, step=0.05, help="Average goals expected for Home team")
+        lambda_h = st.number_input("Home Expected Goals (λ)", value=1.85, step=0.05)
     with c3:
-        mu_a = st.number_input("Away Expected Goals (μ)", value=0.95, step=0.05, help="Average goals expected for Away team")
+        mu_a = st.number_input("Away Expected Goals (μ)", value=0.95, step=0.05)
         
     st.markdown("### 2. Live Bookmaker Odds")
     o1, o2, o3, o4, o5 = st.columns(5)
@@ -184,7 +254,6 @@ with tab1:
         m_prob = probs[key]
         ev = (m_prob * b_odds) - 1.0
         
-        # Quarter Kelly calculation
         b = b_odds - 1.0
         q = 1.0 - m_prob
         full_k = (m_prob * b - q) / b if b > 0 else 0
@@ -220,12 +289,13 @@ with tab2:
         col_x, col_y = st.columns(2)
         with col_x:
             match_name = st.text_input("Match Name", value=match_title)
-            competition = st.selectbox("League / Competition", ["Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"])
+            comp_choice = selected_league if selected_league != "All Leagues" else "Premier League"
+            competition = st.selectbox("League / Competition", ["Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"], index=0)
             selection = st.selectbox("Selection Placed", ["Home", "Draw", "Away", "Over 2.5 Goals", "Under 2.5 Goals"])
             executed_odds = st.number_input("Odds Secured", value=1.85, step=0.01)
         
         with col_y:
-            match_date = st.date_input("Date Placed", datetime.now())
+            match_date = st.date_input("Date Placed", value=date.today(), format="DD/MM/YYYY")
             cash_staked = st.number_input("Cash Staked ($ / KES)", value=100.0, step=10.0)
             model_prob = st.number_input("Model Prob (%)", value=62.0, step=1.0)
             
@@ -242,6 +312,7 @@ with tab2:
                 """, (ticket_id, datetime.now().isoformat(), str(match_date), competition, match_name, selection, executed_odds, cash_staked, model_prob))
                 conn.commit()
             st.success(f"✅ Ticket {ticket_id} successfully logged!")
+            st.rerun()
 
 # ---------------------------------------------------------------------
 # TAB 3: CAPITAL LEDGER
@@ -255,16 +326,23 @@ with tab3:
     if df_bets.empty:
         st.info("No bets recorded in ledger yet.")
     else:
-        open_bets = df_bets[df_bets['status'] == 'OPEN']
-        settled_bets = df_bets[df_bets['status'] != 'OPEN']
+        # Filter ledger by selected league & dates
+        df_bets['match_date_dt'] = pd.to_datetime(df_bets['match_date']).dt.date
+        mask = (df_bets['match_date_dt'] >= start_date) & (df_bets['match_date_dt'] <= end_date)
+        if selected_league != "All Leagues":
+            mask = mask & (df_bets['competition'] == selected_league)
+            
+        filtered_df = df_bets[mask]
         
-        # Performance Top Metrics
+        open_bets = filtered_df[filtered_df['status'] == 'OPEN']
+        settled_bets = filtered_df[filtered_df['status'] != 'OPEN']
+        
         total_staked = settled_bets['cash_staked'].sum() if not settled_bets.empty else 0
         total_pnl = settled_bets['net_pnl'].sum() if not settled_bets.empty else 0
         roi = (total_pnl / total_staked * 100) if total_staked > 0 else 0
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("TOTAL STAKED", f"${total_staked:,.2f}")
+        m1.metric("TOTAL STAKED (FILTERED)", f"${total_staked:,.2f}")
         m2.metric("NET PnL", f"${total_pnl:+,.2f}")
         m3.metric("ACTUAL YIELD (ROI)", f"{roi:+.2f}%")
         
@@ -287,7 +365,7 @@ with tab3:
                             conn.commit()
                         st.rerun()
         else:
-            st.write("No open tickets pending settlement.")
+            st.write("No open tickets matching current filters.")
             
         if not settled_bets.empty:
             st.markdown("---")
