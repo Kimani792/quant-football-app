@@ -6,7 +6,7 @@ from datetime import datetime, date
 import streamlit as st
 
 # =====================================================================
-# 1. PAGE SETUP & VIBRANT HIGH-CONTRAST STYLING
+# 1. PAGE SETUP & STYLING
 # =====================================================================
 st.set_page_config(
     page_title="QUANT FOOTBALL SUITE", 
@@ -32,27 +32,6 @@ st.markdown("""
         color: #00E5FF !important;
         font-weight: 700 !important;
     }
-    
-    .card-value {
-        background: #111a2e;
-        border: 2px solid #00FF88;
-        border-radius: 10px;
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(0, 255, 136, 0.15);
-    }
-    
-    .card-no-value {
-        background: #1a111e;
-        border: 2px solid #FF3366;
-        border-radius: 10px;
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(255, 51, 102, 0.15);
-    }
-
-    .badge-green { color: #00FF88; font-size: 22px; font-weight: 900; }
-    .badge-red { color: #FF3366; font-size: 18px; font-weight: 800; }
     
     .bankroll-card {
         background: #111a2e;
@@ -91,7 +70,7 @@ def init_db():
 init_db()
 
 # =====================================================================
-# 2. DIXON-COLES ENGINE & MATRIX GENERATOR
+# 2. DIXON-COLES ENGINE
 # =====================================================================
 def dixon_coles_tau(x, y, lambda_h, mu_a, rho=-0.06):
     if x == 0 and y == 0: return 1.0 - (lambda_h * mu_a * rho)
@@ -100,7 +79,7 @@ def dixon_coles_tau(x, y, lambda_h, mu_a, rho=-0.06):
     elif x == 1 and y == 1: return 1.0 - rho
     return 1.0
 
-def calculate_full_match_engine(lambda_h, mu_a, max_goals=8):
+def calculate_match_metrics(lambda_h, mu_a, max_goals=8):
     matrix = np.zeros((max_goals + 1, max_goals + 1))
     for h in range(max_goals + 1):
         for a in range(max_goals + 1):
@@ -110,32 +89,28 @@ def calculate_full_match_engine(lambda_h, mu_a, max_goals=8):
             matrix[h, a] = p_h * p_a * tau
     matrix /= np.sum(matrix)
     
-    prob_home = float(np.sum(np.tril(matrix, -1)))
-    prob_draw = float(np.sum(np.diag(matrix)))
-    prob_away = float(np.sum(np.triu(matrix, 1)))
+    p_home = float(np.sum(np.tril(matrix, -1)))
+    p_draw = float(np.sum(np.diag(matrix)))
+    p_away = float(np.sum(np.triu(matrix, 1)))
+    p_under = sum(matrix[h, a] for h in range(3) for a in range(3 - h))
+    p_over = 1.0 - p_under
     
-    prob_under_25 = sum(matrix[h, a] for h in range(3) for a in range(3 - h))
-    prob_over_25 = 1.0 - prob_under_25
-    
-    # 3x3 Scoreline Grid for Beginners
-    grid_3x3 = pd.DataFrame(
-        matrix[:3, :3] * 100, 
-        index=["Home 0", "Home 1", "Home 2"], 
-        columns=["Away 0", "Away 1", "Away 2"]
-    )
-    
-    probs = {
-        "Home": prob_home, 
-        "Draw": prob_draw, 
-        "Away": prob_away,
-        "Over 2.5": prob_over_25,
-        "Under 2.5": prob_under_25
-    }
-    
-    return probs, grid_3x3
+    return {"Home": p_home, "Draw": p_draw, "Away": p_away, "Over 2.5": p_over, "Under 2.5": p_under}
 
 # =====================================================================
-# 3. SIDEBAR CONTROLS & BANKROLL
+# 3. SAMPLE MULTI-MATCH FIXTURES DATASET
+# =====================================================================
+def get_sample_fixtures():
+    today_str = date.today().strftime("%Y-%m-%d")
+    return [
+        {"date": today_str, "league": "Premier League", "home": "Arsenal", "away": "Chelsea", "lambda_h": 1.85, "mu_a": 0.95, "odds": {"Home": 1.85, "Draw": 3.80, "Away": 4.50, "Over 2.5": 1.95, "Under 2.5": 1.90}},
+        {"date": today_str, "league": "Premier League", "home": "Liverpool", "away": "Man City", "lambda_h": 1.60, "mu_a": 1.55, "odds": {"Home": 2.40, "Draw": 3.60, "Away": 2.80, "Over 2.5": 1.70, "Under 2.5": 2.15}},
+        {"date": today_str, "league": "La Liga", "home": "Real Madrid", "away": "Barcelona", "lambda_h": 1.90, "mu_a": 1.30, "odds": {"Home": 2.05, "Draw": 3.70, "Away": 3.40, "Over 2.5": 1.65, "Under 2.5": 2.25}},
+        {"date": today_str, "league": "Serie A", "home": "Inter", "away": "Juventus", "lambda_h": 1.45, "mu_a": 0.85, "odds": {"Home": 1.95, "Draw": 3.30, "Away": 4.20, "Over 2.5": 2.10, "Under 2.5": 1.75}},
+    ]
+
+# =====================================================================
+# 4. SIDEBAR CONTROLS & BANKROLL
 # =====================================================================
 with st.sidebar:
     st.title("⚙️ CONTROL PANEL")
@@ -179,95 +154,69 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # =====================================================================
-# 4. MAIN INTERACTION DECK
+# 5. MAIN INTERACTION DECK
 # =====================================================================
 st.title("⚡ QUANTITATIVE FOOTBALL SUITE")
 st.markdown(f"<p style='color: #00FFCC; font-size: 15px; font-weight: 700;'>ACTIVE FILTER: {start_date.strftime('%d/%m/%Y')} TO {end_date.strftime('%d/%m/%Y')} | LEAGUE: {selected_league.upper()}</p>", unsafe_allow_html=True)
 st.write("---")
 
 tab1, tab2, tab3 = st.tabs([
-    "🎯 INTERACTIVE MATCH SCANNER", 
+    "🎯 MATCH FIXTURES SCANNER", 
     "📝 EXECUTE TICKET", 
     "📈 CAPITAL LEDGER"
 ])
 
 # ---------------------------------------------------------------------
-# TAB 1: INTERACTIVE SCANNER & SCORE GRID
+# TAB 1: MULTI-MATCH FIXTURE TABLE & VALUE INDICATORS
 # ---------------------------------------------------------------------
 with tab1:
-    col_input, col_grid = st.columns([1, 1])
+    st.markdown("### Upcoming Match Predictions & Value Analysis")
     
-    with col_input:
-        st.markdown("### 1. Match Parameters")
-        fixture_name = st.text_input("Fixture", value="Arsenal vs Chelsea")
-        c_h, c_a = st.columns(2)
-        with c_h:
-            lambda_h = st.slider("Home Expected Goals (λ)", 0.2, 4.0, 1.85, 0.05)
-        with c_a:
-            mu_a = st.slider("Away Expected Goals (μ)", 0.2, 4.0, 0.95, 0.05)
+    fixtures = get_sample_fixtures()
+    
+    # Filter fixtures by league
+    if selected_league != "All Leagues":
+        fixtures = [f for f in fixtures if f["league"] == selected_league]
+        
+    if not fixtures:
+        st.info("No games scheduled for the selected league.")
+    else:
+        for idx, match in enumerate(fixtures):
+            match_title = f"⚽ {match['home']} vs {match['away']} ({match['league']})"
+            probs = calculate_match_probabilities = calculate_match_metrics(match['lambda_h'], match['mu_a'])
             
-    probs, score_grid = calculate_full_match_engine(lambda_h, mu_a)
-    
-    with col_grid:
-        st.markdown("### 2. Scoreline Probability Grid (%)")
-        # Fixed line: Formatting percentage without requiring matplotlib
-        st.dataframe(score_grid.style.format("{:.1f}%"), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### 3. Live Odds Evaluator")
-    
-    o1, o2, o3, o4, o5 = st.columns(5)
-    with o1: odds_h = st.number_input("Home Odds", value=1.85, step=0.01)
-    with o2: odds_d = st.number_input("Draw Odds", value=3.80, step=0.01)
-    with o3: odds_a = st.number_input("Away Odds", value=4.50, step=0.01)
-    with o4: odds_o = st.number_input("Over 2.5 Odds", value=1.95, step=0.01)
-    with o5: odds_u = st.number_input("Under 2.5 Odds", value=1.90, step=0.01)
-    
-    markets = [
-        ("Home Win", "Home", odds_h),
-        ("Draw", "Draw", odds_d),
-        ("Away Win", "Away", odds_a),
-        ("Over 2.5 Goals", "Over 2.5", odds_o),
-        ("Under 2.5 Goals", "Under 2.5", odds_u)
-    ]
-    
-    st.markdown("---")
-    st.markdown(f"### 📊 Valuation Cards for **{fixture_name}**")
-    
-    card_cols = st.columns(len(markets))
-    
-    for idx, (label, key, b_odds) in enumerate(markets):
-        m_prob = probs[key]
-        ev = (m_prob * b_odds) - 1.0
-        
-        b = b_odds - 1.0
-        q = 1.0 - m_prob
-        full_k = (m_prob * b - q) / b if b > 0 else 0
-        q_kelly = max(0.0, full_k * 0.25) * 100
-        
-        with card_cols[idx]:
-            if ev > 0:
-                st.markdown(f"""
-                    <div class="card-value">
-                        <div style="color: #94A3B8; font-size: 13px; font-weight: 700;">{label.upper()}</div>
-                        <div style="font-size: 20px; font-weight: 800; margin: 4px 0;">{b_odds:.2f}</div>
-                        <div style="color: #00FFCC; font-size: 13px;">Model: {m_prob*100:.1f}%</div>
-                        <hr style="border-color: #00FF88; margin: 8px 0;">
-                        <div class="badge-green">+{ev*100:.1f}%</div>
-                        <div style="color: #FFFFFF; font-size: 12px; font-weight: 700;">STAKE: {q_kelly:.1f}%</div>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div class="card-no-value">
-                        <div style="color: #94A3B8; font-size: 13px; font-weight: 700;">{label.upper()}</div>
-                        <div style="font-size: 20px; font-weight: 800; margin: 4px 0;">{b_odds:.2f}</div>
-                        <div style="color: #FF3366; font-size: 13px;">Model: {m_prob*100:.1f}%</div>
-                        <hr style="border-color: #FF3366; margin: 8px 0;">
-                        <div class="badge-red">{ev*100:.1f}%</div>
-                        <div style="color: #94A3B8; font-size: 12px;">NO VALUE</div>
-                    </div>
-                """, unsafe_allow_html=True)
+            with st.expander(match_title, expanded=True):
+                col_info, col_table = st.columns([1, 2])
+                
+                with col_info:
+                    st.markdown(f"**League:** {match['league']}")
+                    st.markdown(f"**Home xG (λ):** `{match['lambda_h']}` | **Away xG (μ):** `{match['mu_a']}`")
+                
+                # Table breakdown for each game
+                table_data = []
+                for selection in ["Home", "Draw", "Away", "Over 2.5", "Under 2.5"]:
+                    m_prob = probs[selection]
+                    b_odds = match["odds"][selection]
+                    ev = (m_prob * b_odds) - 1.0
+                    
+                    b = b_odds - 1.0
+                    q = 1.0 - m_prob
+                    full_k = (m_prob * b - q) / b if b > 0 else 0
+                    q_kelly = max(0.0, full_k * 0.25) * 100
+                    
+                    table_data.append({
+                        "Selection": selection,
+                        "Bookie Odds": f"{b_odds:.2f}",
+                        "Model Prob": f"{m_prob*100:.1f}%",
+                        "Expected Value (EV)": f"{ev*100:+.1f}%",
+                        "Rec. Stake (% Capital)": f"{q_kelly:.1f}%" if ev > 0 else "0.0%",
+                        "Value Status": "🟢 VALUE" if ev > 0 else "🔴 NO VALUE"
+                    })
+                
+                df_match = pd.DataFrame(table_data)
+                
+                with col_table:
+                    st.dataframe(df_match, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------
 # TAB 2: EXECUTE TICKET
@@ -278,7 +227,7 @@ with tab2:
     with st.form("bet_entry_form"):
         col_x, col_y = st.columns(2)
         with col_x:
-            match_name = st.text_input("Match Name", value=fixture_name)
+            match_name = st.text_input("Match Name", value="Arsenal vs Chelsea")
             competition = st.selectbox("League / Competition", ["Premier League", "La Liga", "Serie A", "Bundesliga", "UEFA Champions League", "Other"], index=0)
             selection = st.selectbox("Selection Placed", ["Home", "Draw", "Away", "Over 2.5 Goals", "Under 2.5 Goals"])
             executed_odds = st.number_input("Odds Secured", value=1.85, step=0.01)
