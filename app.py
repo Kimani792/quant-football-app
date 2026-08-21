@@ -210,7 +210,8 @@ with tab1:
     
     with col_grid:
         st.markdown("### 2. Scoreline Probability Grid (%)")
-        st.dataframe(score_grid.style.background_gradient(cmap="Blues"), use_container_width=True)
+        # Fixed line: Formatting percentage without requiring matplotlib
+        st.dataframe(score_grid.style.format("{:.1f}%"), use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 3. Live Odds Evaluator")
